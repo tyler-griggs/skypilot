@@ -62,7 +62,7 @@ class ServiceStatus(enum.Enum):
 
     # Controller failed to initialize / controller or redirector process
     # status abnormal
-    CONTRLLER_FAILED = 'CONTROLLER_FAILED'
+    CONTROLLER_FAILED = 'CONTROLLER_FAILED'
 
     # At least one replica is ready
     READY = 'READY'
@@ -81,7 +81,7 @@ class ServiceStatus(enum.Enum):
 _SERVICE_STATUS_TO_COLOR = {
     ServiceStatus.CONTROLLER_INIT: colorama.Fore.BLUE,
     ServiceStatus.REPLICA_INIT: colorama.Fore.BLUE,
-    ServiceStatus.CONTRLLER_FAILED: colorama.Fore.RED,
+    ServiceStatus.CONTROLLER_FAILED: colorama.Fore.RED,
     ServiceStatus.READY: colorama.Fore.GREEN,
     ServiceStatus.SHUTTING_DOWN: colorama.Fore.YELLOW,
     ServiceStatus.FAILED: colorama.Fore.RED,
@@ -118,7 +118,7 @@ class ReplicaStatus(enum.Enum):
     # leakage.
     FAILED_CLEANUP = 'FAILED_CLEANUP'
 
-    # Unknown status. This should never happen.
+    # Unknown status. This should never happen except for controller failure.
     UNKNOWN = 'UNKNOWN'
 
     @classmethod

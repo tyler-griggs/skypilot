@@ -3970,7 +3970,7 @@ def serve_up(
         service_name)
     if previous_service_record is not None:
         if previous_service_record['status'] in [
-                status_lib.ServiceStatus.CONTRLLER_FAILED,
+                status_lib.ServiceStatus.CONTROLLER_FAILED,
                 status_lib.ServiceStatus.FAILED
         ]:
             prompt = (f'Service {service_name!r} has failed. '
@@ -4168,6 +4168,9 @@ def serve_status(all: bool, service_name: Optional[str]):
       termination not finished correctly. When seeing this status, please login
       to cloud console and check whether there are some resources not released.
 
+    - ``UNKNOWN``: The replica status is unknown. This usually happens when the
+      controller failure is detected and the replica status is not updated yet.
+
     Examples:
 
     .. code-block:: bash
@@ -4197,6 +4200,17 @@ def serve_status(all: bool, service_name: Optional[str]):
             replica_record['service_name'] = service_record['name']
             replica_infos.append(replica_record)
     status_utils.show_replica_table(replica_infos, all)
+
+    failed_controllers = [
+        record['name']
+        for record in service_records
+        if record['status'] == status_lib.ServiceStatus.CONTROLLER_FAILED
+    ]
+    if failed_controllers:
+        num_failed = len(failed_controllers)
+        plural = '' if num_failed == 1 else 's'
+        click.echo(f'\n* {num_failed} service{plural} with failed controller '
+                   'found. The replica info and number might not be accurate.')
 
 
 @serve.command('down', cls=_DocumentedCodeCommand)

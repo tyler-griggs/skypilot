@@ -2619,6 +2619,13 @@ def _service_status_from_replica_info(
     return status_lib.ServiceStatus.REPLICA_INIT
 
 
+def _set_controller_unreachable_status(service_record: Dict[str, Any]) -> None:
+    service_record['status'] = status_lib.ServiceStatus.CONTROLLER_FAILED
+    service_handle: serve_lib.ServiceHandle = service_record['handle']
+    for info in service_handle.replica_info:
+        info['status'] = status_lib.ReplicaStatus.UNKNOWN
+
+
 def _refresh_service_record_no_lock(
         service_name: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
     """Refresh the service, and return the possibly updated record.
@@ -2628,7 +2635,7 @@ def _refresh_service_record_no_lock(
 
     Returns:
         A tuple of a possibly updated record and an error message if any error
-        occurred when refreshing the service.
+        message that needs to be printed in CLI when refreshing the service.
     """
     record = global_user_state.get_service_from_name(service_name)
     if record is None:
@@ -2638,7 +2645,8 @@ def _refresh_service_record_no_lock(
     try:
         check_network_connection()
     except exceptions.NetworkError:
-        return record, 'Failed to refresh replica info due to network error.'
+        return record, ('Failed to refresh replica info due to network error. '
+                        'Using the cached record.')
 
     if not service_handle.endpoint:
         # Service controller is still initializing. Skipped refresh status.
@@ -2649,25 +2657,25 @@ def _refresh_service_record_no_lock(
         controller_cluster_name)
     if (cluster_record is None or
             cluster_record['status'] != status_lib.ClusterStatus.UP):
-        global_user_state.set_service_status(
-            service_name, status_lib.ServiceStatus.CONTRLLER_FAILED)
-        return record, (f'Controller cluster {controller_cluster_name!r} '
-                        'is not found or UP.')
+        _set_controller_unreachable_status(record)
+        global_user_state.add_or_update_service(**record)
+        return record, None
 
     handle = cluster_record['handle']
     backend = get_backend_from_handle(handle)
     assert isinstance(backend, backends.CloudVmRayBackend)
 
     code = serve_lib.ServeCodeGen.get_latest_info()
-    returncode, latest_info_payload, stderr = backend.run_on_head(
+    returncode, latest_info_payload, _ = backend.run_on_head(
         handle,
         code,
         require_outputs=True,
         stream_logs=False,
         separate_stderr=True)
     if returncode != 0:
-        return record, ('Failed to refresh replica info from the controller. '
-                        f'Using the cached record. Reason: {stderr}')
+        _set_controller_unreachable_status(record)
+        global_user_state.add_or_update_service(**record)
+        return record, None
 
     latest_info = serve_lib.load_latest_info(latest_info_payload)
     service_handle.replica_info = latest_info['replica_info']
