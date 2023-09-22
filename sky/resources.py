@@ -2,10 +2,10 @@
 import functools
 import os
 from typing import Dict, List, Optional, Set, Union
+import yaml
 
 import colorama
 from typing_extensions import Literal
-import yaml
 
 from sky import clouds
 from sky import global_user_state
@@ -29,7 +29,7 @@ _DEFAULT_DISK_SIZE_GB = 256
 class Resources:
     """Resources: compute requirements of Tasks.
 
-    This class is immutable once created (to ensure some validations are done
+    This class is immutable once created (to ensure some validations are done
     whenever properties change). To update the property of an instance of
     Resources, use `resources.copy(**new_properties)`.
 
@@ -55,7 +55,7 @@ class Resources:
         accelerator_args: Optional[Dict[str, str]] = None,
         use_spot: Optional[bool] = None,
         spot_recovery: Optional[str] = None,
-        region: Optional[str] = None,
+        region: Optional[Union[str, List[str]]] = None,
         zone: Optional[str] = None,
         image_id: Union[Dict[str, str], str, None] = None,
         disk_size: Optional[int] = None,
@@ -106,7 +106,8 @@ class Resources:
             spot to recover the cluster from preemption. Refer to
             `recovery_strategy module <https://github.com/skypilot-org/skypilot/blob/master/sky/spot/recovery_strategy.py>`__ # pylint: disable=line-too-long
             for more details.
-          region: the region to use.
+          region: the region(s) to use. If a region is prefixed with `-`, it
+            it will be excluded. 
           zone: the zone to use.
           image_id: the image ID to use. If a str, must be a string
             of the image id from the cloud, such as AWS:
@@ -135,6 +136,24 @@ class Resources:
         self._cloud = cloud
         self._region: Optional[str] = None
         self._zone: Optional[str] = None
+        self._region_list = None
+        self._excluded_regions = None
+        if isinstance(region, list):
+            if len(region) > 1:
+                self._region_list = region
+                region = None
+            elif len(region) == 1:
+                region = region[0]
+            else:  # len(region) == 0
+                region = None
+
+        if region is not None and region.startswith('-'):
+            self._excluded_regions = [region.strip('-')]
+            region = None
+        elif self._region_list is not None:
+            self._excluded_regions = [r.strip('-') for r in self._region_list if r.startswith('-')]
+            self._region_list = [r for r in self._region_list if not r.startswith('-')]
+
         self._set_region_zone(region, zone)
 
         self._instance_type = instance_type
@@ -286,6 +305,25 @@ class Resources:
     @property
     def region(self):
         return self._region
+
+    @property
+    def region_list(self):
+        return self._region_list
+    
+    @property
+    def excluded_regions(self):
+        return self._excluded_regions
+    
+    @property
+    def all_region_filters(self) -> List[str]:
+        regions = []
+        if self.region is not None:
+            regions.append(self.region)
+        elif self.region_list is not None:
+            regions.extend(self.region_list)
+        if self.excluded_regions is not None:
+            regions.extend(['-' + r for r in self.excluded_regions])
+        return regions
 
     @property
     def zone(self):
@@ -845,6 +883,18 @@ class Resources:
                 self.accelerators, self.use_spot, self._region, self._zone)
         return hourly_cost * hours
 
+    def get_accelerators_str(self) -> str:
+        accelerators = self.accelerators
+        if accelerators is None:
+            accelerators = '-'
+        elif isinstance(accelerators, dict) and len(accelerators) == 1:
+            accelerators, count = list(accelerators.items())[0]
+            accelerators = f'{accelerators}:{count}'
+        return accelerators
+
+    def get_spot_str(self) -> str:
+        return '[Spot]' if self.use_spot else ''
+
     def make_deploy_variables(
             self, region: clouds.Region,
             zones: Optional[List[clouds.Zone]]) -> Dict[str, Optional[str]]:
@@ -1021,6 +1071,16 @@ class Resources:
     def copy(self, **override) -> 'Resources':
         """Returns a copy of the given Resources."""
         use_spot = self.use_spot if self._use_spot_specified else None
+        regions = []
+        if self.region is not None:
+            regions.append(self.region)
+        elif self.region_list is not None:
+            regions.extend(self.region_list)
+        if self.excluded_regions is not None:
+            regions.extend(['-' + r for r in self.excluded_regions])
+        if len(regions) == 0:
+            regions = None
+
         resources = Resources(
             cloud=override.pop('cloud', self.cloud),
             instance_type=override.pop('instance_type', self.instance_type),
@@ -1032,7 +1092,7 @@ class Resources:
             use_spot=override.pop('use_spot', use_spot),
             spot_recovery=override.pop('spot_recovery', self.spot_recovery),
             disk_size=override.pop('disk_size', self.disk_size),
-            region=override.pop('region', self.region),
+            region=override.pop('region', regions),
             zone=override.pop('zone', self.zone),
             image_id=override.pop('image_id', self.image_id),
             disk_tier=override.pop('disk_tier', self.disk_tier),
@@ -1153,9 +1213,19 @@ class Resources:
 
         if self._use_spot_specified:
             add_if_not_none('use_spot', self.use_spot)
-        config['spot_recovery'] = self.spot_recovery
-        config['disk_size'] = self.disk_size
-        add_if_not_none('region', self.region)
+            add_if_not_none('spot_recovery', self.spot_recovery)
+        add_if_not_none('disk_size', self.disk_size)
+
+        regions = []
+        if self.region is not None:
+            regions.append(self.region)
+        elif self.region_list is not None:
+            regions.extend(self.region_list)
+        if self.excluded_regions is not None:
+            regions.extend(['-' + r for r in self.excluded_regions])
+        if len(regions) > 0:
+            add_if_not_none('region', regions)
+
         add_if_not_none('zone', self.zone)
         add_if_not_none('image_id', self.image_id)
         add_if_not_none('disk_tier', self.disk_tier)

@@ -141,6 +141,7 @@ if __name__ == '__main__':
         args.task_yaml,
         args.service_name,
         resources.use_spot,
+        resources.all_region_filters,
         controller_port=args.controller_port,
         readiness_suffix=service_spec.readiness_suffix,
         initial_delay_seconds=service_spec.initial_delay_seconds,

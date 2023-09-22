@@ -250,12 +250,13 @@ class InfraProvider:
 class SkyPilotInfraProvider(InfraProvider):
     """Infra provider for SkyPilot clusters."""
 
-    def __init__(self, task_yaml_path: str, service_name: str, use_spot: bool,
+    def __init__(self, task_yaml_path: str, service_name: str, use_spot: bool, region_filters: List[str],
                  *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.task_yaml_path: str = task_yaml_path
         self.service_name: str = service_name
         self.use_spot: bool = use_spot
+        self.region_filters: List[str] = region_filters
         self.next_replica_id: int = 1
         self.launch_process_pool: serve_utils.ThreadSafeDict[
             str, subprocess.Popen] = serve_utils.ThreadSafeDict()
@@ -426,6 +427,10 @@ class SkyPilotInfraProvider(InfraProvider):
         logger.info(f'Creating SkyPilot cluster {cluster_name}')
         cmd = ['sky', 'launch', self.task_yaml_path, '-c', cluster_name, '-y']
         cmd.extend(['--detach-setup', '--detach-run', '--retry-until-up'])
+        for r in self.region_filters:
+            cmd.extend(['--region', r])
+        # cmd.extend(['--region ' + r for r in self.region_filters])
+        logger.info(f'tgriggs: launching with new command: {cmd}')
         fn = serve_utils.generate_replica_launch_log_file_name(
             self.service_name, replica_id)
         with open(fn, 'w') as f:
@@ -495,7 +500,17 @@ class SkyPilotInfraProvider(InfraProvider):
     def _recover_from_preemption(self, cluster_name: str) -> None:
         # TODO(tgriggs): Hook in policy strategy options here.
         logger.info(f'Beginning recovery for preempted cluster {cluster_name}.')
-        self.replica_info[cluster_name].status_property.preempted = True
+        info = self.replica_info[cluster_name]
+        info.status_property.preempted = True
+        # region_preempted = info.handle.launched_resources.all_region_filters
+
+        self.region_filters = ['-' + info.handle.launched_resources.region]
+
+        # I want 1) the region filters and 2) the currently launched region
+        logger.info(f'tgriggs: v2 preempted replica region is: {info.handle.launched_resources.region}')
+        logger.info(f'tgriggs: preempted replica region filter list is: {info.handle.launched_resources.all_region_filters}')
+        logger.info(f'tgriggs: updating filter to: {self.region_filters}')
+
         # Logs are not synced because the cluster is no longer up.
         self._teardown_cluster(cluster_name, sync_down_logs=False)
 
@@ -654,6 +669,8 @@ class SkyPilotInfraProvider(InfraProvider):
                     _) = backends.backend_utils.refresh_cluster_status_handle(
                         cluster_name,
                         force_refresh_statuses=set(status_lib.ClusterStatus))
+                
+                logger.info(f'tgriggs: region filters {info.handle.launched_resources.all_region_filters}')
 
                 if cluster_status != status_lib.ClusterStatus.UP:
                     # The cluster is (partially) preempted. It can be down, INIT
